@@ -22,11 +22,20 @@ assistant = client.beta.assistants.create(
     2. For the determined type, extract **exactly** all properties listed in its value string—no more, no fewer—preserving order and units.
     3. If any property cannot be found in the source, set its value to "Not found".
     4. Do not guess or fabricate any data.
+    5. Additionally, extract these top‐level fields from the datasheet:
+   - **product**: the official product name as written prominently on the datasheet.
+   - **part number**: the manufacturer’s SKU or model code.
+   - **manufacturer**: the company name that makes the product.
+   - **NCM**: the 8-digit Mercosul classification code, if available in the datasheet; if not, you may determine the most appropriate NCM based on the product’s description or “Not found” if uncertain.
+   - **datasheet**: the URL or file path where the full PDF datasheet can be downloaded; if the PDF itself does not include a URL, you may supply a reasonable public link (e.g. manufacturer’s website) or “Not found” if unavailable.
     5. Return your result strictly in this JSON format (no extra commentary):
 
     {
+    "product": "<value>",
     "part number": "<value>",
     "manufacturer": "<value>",
+    "NCM": "<value>",
+    "datasheet": <value>,
     "type": {
         "name": "<type>",
         "<property 1>": "<value>",

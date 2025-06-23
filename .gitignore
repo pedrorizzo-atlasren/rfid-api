@@ -1,0 +1,43 @@
+# Ignorar ambiente virtual específico
+venv-rfid/
+
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Outros ambientes virtuais comuns
+.venv/
+venv/
+env/
+ENV/
+*.env
+*.venv
+*.egg-info/
+
+# VS Code
+.vscode/
+
+# Pytest cache
+.pytest_cache/
+
+# Logs
+*.log
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# IDEs
+.idea/
+*.iml
+
+# SQLite DB (se usar)
+*.db
+
+# Build artifacts
+build/
+dist/
+*.egg
