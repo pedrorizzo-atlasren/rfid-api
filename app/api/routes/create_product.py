@@ -1,9 +1,15 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, Request
 from fastapi.responses import JSONResponse
 from openai import OpenAI
 from dotenv import load_dotenv
 import os
 import tempfile
+from schemas.product import RegisterProduct
+from fastapi import Depends
+from sqlalchemy.orm import Session
+from models.product import Product
+from database import get_db
+
 
 router = APIRouter()
 load_dotenv()
@@ -315,3 +321,36 @@ async def extract_description(file: UploadFile = File(...)):
 #         # Agora o arquivo já foi fechado corretamente e pode ser removido
 #         if os.path.exists(temp_path):
 #             os.remove(temp_path)
+
+@router.post("/submit-product", response_model=RegisterProduct)
+async def submit_product(
+    request: Request,
+    payload: RegisterProduct,
+    db: Session = Depends(get_db)
+):
+
+    # 1) Verifica unicidade de part_number (opcional)
+    exists = db.query(Product).filter_by(part_number=payload.part_number).first()
+    if exists:
+        raise HTTPException(400, "part_number already exists")
+
+    # 2) Cria instância do ORM
+    new = Product(
+        product      = payload.product,
+        manufacturer = payload.manufacturer,
+        part_number  = payload.part_number,
+        description  = payload.description,    # aqui vai a string concatenada
+        ncm          = payload.ncm,   # ou payload.NCM, conforme seu modelo
+        datasheet    = payload.datasheetURL,
+        qtde         = 0,
+        type         = payload.product_type,
+        price        = payload.price
+    )
+
+    # 3) Persiste no banco
+    db.add(new)
+    db.commit()
+    db.refresh(new)
+
+    # 4) Retorna de volta o objeto salvo (ou apenas um OK)
+    return payload
