@@ -30,6 +30,9 @@ SessionLocal = sessionmaker(
 # Classe base para todos os models
 Base = declarative_base()
 
+from models import product, item, logs
+
+
 # Dependência para obter uma sessão e fechá-la ao final da requisição
 def get_db():
     db = SessionLocal()

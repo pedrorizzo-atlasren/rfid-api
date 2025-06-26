@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from starlette.websockets import WebSocket, WebSocketDisconnect
 from queue import Queue
 from typing import Optional
@@ -13,7 +13,15 @@ from sllurp.llrp import (
 import logging
 from threading import Timer
 import time
-from schemas.event import RegisterEvent
+from schemas.event import RegisterEvent, EventOut
+from typing import List
+from database import get_db
+from sqlalchemy.orm import Session
+from models.logs import Log
+from models.item import Item
+from database import SessionLocal
+from sqlalchemy.dialects.postgresql import insert
+from datetime import datetime
 
 
 
@@ -87,100 +95,143 @@ def stop_reading():
 def get_status():
     return {"status": READER.is_alive()}
 
-CONFIRM_DELAY = 1.0  
 
-CONFIRM_TIMERS: dict[str, Timer] = {}
+# def tag_report_cb(_reader, tag_reports):
+    # global TAG_DATA, TAG_STATE, LOGS
+#     now = int(time.time())
+#     TAG_DATA = []
 
-# def schedule_confirmation(epc: str, to_status: str):
-#     # cancela timer anterior, se existir
-#     prev_timer = CONFIRM_TIMERS.get(epc)
-#     if prev_timer:
-#         prev_timer.cancel()
+#     for tag in tag_reports:
+#         epc = tag["EPC"].decode("ascii")
+#         antenna = tag.get("AntennaID")
+#         channel = tag["ChannelIndex"]
+#         last_seen = tag["LastSeenTimestampUTC"]
+#         seen_count = tag["TagSeenCount"]
 
-#     def confirm():
-#         now = time.time()
-#         prev = TAG_STATE.get(epc)
-#         if prev and prev["status"] != to_status:
-#             TAG_STATE[epc]["status"]    = to_status
-#             TAG_STATE[epc]["last_seen"] = now
-#             LOGS[epc].append({"timestamp": now, "status": to_status})
-#         CONFIRM_TIMERS.pop(epc, None)
+#         TAG_DATA.append(RFIDTag(
+#             epc=epc,
+#             channel=channel,
+#             last_seen=last_seen,
+#             seen_count=seen_count,
+#             antenna=antenna,
+#         ))
 
-#     # agenda o timer
-#     timer = Timer(CONFIRM_DELAY, confirm)
-#     timer.daemon = True
-#     timer.start()
-#     CONFIRM_TIMERS[epc] = timer
+#         previous = TAG_STATE.get(epc)
 
+#         if epc not in LOGS:
+#             LOGS[epc] = []
+
+
+#         # PRIMERIA VEZ QUE A TAG APARECE -> BAIXA NO ESTOQUES
+#         if previous is None and antenna == 1:
+#             # Primeira vez que a tag aparece — baixa no estoque
+#             TAG_STATE[epc] = {
+#                 "last_antenna": antenna,
+#                 "status": "in",
+#                 "last_seen": now,
+#             }
+#             LOGS[epc].append({"timestamp": now, "status": "baixa", "registered": True})
+
+#         else:
+#             last_ant = previous["last_antenna"]
+#             status = previous["status"]
+
+#             if antenna == 2 and last_ant == 1:
+#                 # Saída
+#                 TAG_STATE[epc] = {
+#                     "last_antenna": antenna,
+#                     "status": "out",
+#                     "last_seen": now,
+#                 }
+#                 LOGS[epc].append({"timestamp": now, "status": "saida", "registered": False})
+
+#             #Se a antena atual que lê o objeto é a 1 e a última antena que o leu foi a 2,
+#             #registra uma re-entrada
+#             elif antenna == 1  and last_ant == 2:
+#                 # Reentrada
+#                 TAG_STATE[epc] = {
+#                     "last_antenna": antenna,
+#                     "status": "in",
+#                     "last_seen": now,
+#                 }
+#                 LOGS[epc].append({"timestamp": now, "status": "reentrada", "registered": False})
+
+#             else:
+#                 # Atualiza apenas tempo e antena
+#                 TAG_STATE[epc]["last_antenna"] = antenna
+#                 TAG_STATE[epc]["last_seen"] = now
+
+
+    # serializable = [tag.model_dump() for tag in TAG_DATA]
+    # TAG_QUEUE.put(serializable)
 
 def tag_report_cb(_reader, tag_reports):
-    global TAG_DATA, TAG_STATE, LOGS
     now = int(time.time())
-    TAG_DATA = []
-
-    for tag in tag_reports:
-        epc = tag["EPC"].decode("ascii")
-        antenna = tag.get("AntennaID")
-        channel = tag["ChannelIndex"]
-        last_seen = tag["LastSeenTimestampUTC"]
-        seen_count = tag["TagSeenCount"]
-
-        TAG_DATA.append(RFIDTag(
-            epc=epc,
-            channel=channel,
-            last_seen=last_seen,
-            seen_count=seen_count,
-            antenna=antenna,
-        ))
-
-        previous = TAG_STATE.get(epc)
-
-        if epc not in LOGS:
-            LOGS[epc] = []
+    db = SessionLocal()
+    global TAG_DATA, TAG_STATE, LOGS
 
 
-        # PRIMERIA VEZ QUE A TAG APARECE -> BAIXA NO ESTOQUES
-        if previous is None and antenna == 1:
-            # Primeira vez que a tag aparece — baixa no estoque
-            TAG_STATE[epc] = {
-                "last_antenna": antenna,
-                "status": "in",
-                "last_seen": now,
-            }
-            LOGS[epc].append({"timestamp": now, "status": "baixa", "registered": True})
+    try:
+        for tag in tag_reports:
 
-        else:
-            last_ant = previous["last_antenna"]
-            status = previous["status"]
+            epc = tag["EPC"].decode("ascii")
+            antenna = tag.get("AntennaID")
+            channel = tag["ChannelIndex"]
+            last_seen = tag["LastSeenTimestampUTC"]
+            seen_count = tag["TagSeenCount"]
 
-            if antenna == 2 and last_ant == 1:
-                # Saída
-                TAG_STATE[epc] = {
-                    "last_antenna": antenna,
-                    "status": "out",
-                    "last_seen": now,
-                }
-                LOGS[epc].append({"timestamp": now, "status": "saida", "registered": False})
+            TAG_DATA.append(RFIDTag(
+                epc=epc,
+                channel=channel,
+                last_seen=last_seen,
+                seen_count=seen_count,
+                antenna=antenna,
+            ))
 
-            #Se a antena atual que lê o objeto é a 1 e a última antena que o leu foi a 2,
-            #registra uma re-entrada
-            elif antenna == 1  and last_ant == 2:
-                # Reentrada
-                TAG_STATE[epc] = {
-                    "last_antenna": antenna,
-                    "status": "in",
-                    "last_seen": now,
-                }
-                LOGS[epc].append({"timestamp": now, "status": "reentrada", "registered": False})
+            serializable = [tag.model_dump() for tag in TAG_DATA]
+            TAG_QUEUE.put(serializable)
 
+
+            # recupera estado anterior diretamente do banco
+            prev_item = db.query(Item).filter_by(item_id=epc).first()
+            prev_status = prev_item.status if prev_item else None
+
+            # decide novo status
+            if prev_item is None and antenna == 1:
+                new_status, new_desc = "entrance", "entrance"
+            elif (prev_status == "entrance" or prev_status == "re-entrance") and antenna == 2:
+                new_status, new_desc = "out", ""
+            elif prev_status == "out" and antenna == 1:
+                new_status, new_desc = "re-entrance", ""
             else:
-                # Atualiza apenas tempo e antena
-                TAG_STATE[epc]["last_antenna"] = antenna
-                TAG_STATE[epc]["last_seen"] = now
+                # nenhum evento significativo, só atualiza timestamp
+                new_status, new_desc = prev_status, prev_item.status_desc if prev_item else ""
 
+            
+            if new_status and new_status != prev_status:
+                # 3) grava no histórico de logs
+                log = Log(
+                    item_id    = epc,
+                    status     = new_status,
+                    timestamp  = datetime.now(),  # sem UTC
+                    registered = False
+                )
+                db.add(log)
 
-    serializable = [tag.model_dump() for tag in TAG_DATA]
-    TAG_QUEUE.put(serializable)
+                # 4) atualiza somente agora o item
+                prev_item.status      = new_status
+                prev_item.status_desc = ""           # ou algo genérico
+                prev_item.ts          = datetime.now()
+                db.add(prev_item)
+
+                db.commit()
+            
+
+    except:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 # Define callback for events
 def handle_event(_reader, event):
@@ -254,22 +305,4 @@ async def websocket_endpoint(websocket: WebSocket):
             ACTIVE_CONNECTIONS.remove(websocket)
 
 
-@router.get("/logs")
-async def get_logs():
-    return LOGS
 
-@router.post("/register-event")
-async def register_event(data: RegisterEvent):
-    """
-    Marca o evento como registrado. 
-    Aqui você pode salvar em BD, arquivo, ou simplesmente sinalizar
-    no LOGS[epc] definindo data.registered = True.
-    """
-    epc = data.epc
-    ts  = data.timestamp
-    # encontra no LOGS[epc] o evento com mesmo timestamp e status
-    for evt in LOGS.get(epc, []):
-        if evt["timestamp"] == ts and evt["status"] == data.status:
-            evt["registered"] = True
-            break
-    return {"ok": True}

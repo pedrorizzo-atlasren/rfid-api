@@ -2,6 +2,9 @@
 
 from sqlalchemy import Column, Integer, Text, Numeric
 from database import Base
+from sqlalchemy.orm import relationship
+# from models.item import Item
+
 
 class Product(Base):
     __tablename__ = "products"          # nome da tabela no Postgres
@@ -16,3 +19,11 @@ class Product(Base):
     qtde         = Column(Integer, nullable=False, default=0)
     type         = Column(Text,   nullable=True)
     price        = Column(Numeric(12, 2), nullable=True)
+
+
+    items = relationship(
+        "Item",
+        back_populates="product",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
