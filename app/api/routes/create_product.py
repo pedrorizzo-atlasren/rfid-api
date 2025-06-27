@@ -8,7 +8,10 @@ from schemas.product import RegisterProduct
 from fastapi import Depends
 from sqlalchemy.orm import Session
 from models.product import Product
+from models.type import Type
+from models.ncm import NCM
 from database import get_db
+import re
 
 
 router = APIRouter()
@@ -32,7 +35,7 @@ assistant = client.beta.assistants.create(
    - **product**: the official product name as written prominently on the datasheet.
    - **part number**: the manufacturer’s SKU or model code.
    - **manufacturer**: the company name that makes the product.
-   - **NCM**: the 8-digit Mercosul classification code, if available in the datasheet; if not, you may determine the most appropriate NCM based on the product’s description or “Not found” if uncertain.
+   - **NCM**: the 8-digit Mercosul classification code, if available in the datasheet; if not, you may determine the most appropriate NCM based on the product’s description or “Not found” if uncertain. When extracting or generating an NCM code, format it as 1234.56.78 (four digits, a dot, two digits, a dot, two digits).
    - **datasheet**: the URL or file path where the full PDF datasheet can be downloaded; if the PDF itself does not include a URL, you may supply a reasonable public link (e.g. manufacturer’s website) or “Not found” if unavailable.
     5. Return your result strictly in this JSON format (no extra commentary):
 
@@ -55,154 +58,65 @@ assistant = client.beta.assistants.create(
 Types and their required properties:
     
 
-{
-  "HMI": "display type, screen size (inches), resolution, interface",
-  "UPS": "input voltage (V), output voltage (V), battery type, backup time (min), supply type (AC or DC), rated capacity (kVA), efficiency (%), topology (online/offline), transfer time (ms), weight (kg)",
-  "accessory": "accessory type",
-  "actuator": "actuator type", 
-  "adapter": "input voltage (V), output voltage (V), connector type, power rating (W)",
-  "air dryer": "airflow (CFM), operating pressure (bar), power consumption (W)",
-  "analyzer": "measured parameters, input range, accuracy, display type",
-  "antenna": "frequency range (MHz), gain (dBi), polarization, beamwidth (°), connector type",
-  "antenna accessory": "accessory type, compatible antenna types",
-  "auxiliary contact": "contact configuration, rated current (A), rated voltage (V)",
-  "battery": "nominal voltage (V), capacity (Ah), chemistry, cycle life (cycles), weight (kg), energy density (Wh/kg), internal resistance (mΩ), maximum discharge rate (C), operating temperature range (°C), self-discharge rate (%/month)",  "battery module": "nominal voltage (V), capacity (Ah), chemistry, weight (kg)",
-  "busbar": "cross-sectional area (mm²), material, rated current (A)",
-  "bushing": "voltage rating (kV)",
-  "cabinet": "material, degree of protection (IP/NEMA), mounting style",
-  "cable": "cross-sectional area (mm²), operating voltage (V), conductor material, insulation material, temperature rating (°C), outer diameter (mm)",
-  "cable accessory": "accessory type, compatible cable types",
-  "cable connector": "compatible conductor cross-sectional area (mm²), connection type, number of contacts, rated current (A), rated voltage (V)",
-  "cable insulation": "insulation material, thickness (mm), maximum temperature (°C), dielectric strength (kV/mm)",
-  "capacitor": "capacitance (µF), rated voltage (V), tolerance (%), dielectric type, ESR (Ω), ripple current (A), temperature coefficient (ppm/°C), leakage current (µA), operating temperature range (°C), dimensions (mm)",
-  "capacitor bank": "total capacitance (µF), rated voltage (V), number of modules",
-  "capacitor board": "board type, number of capacitor slots, mounting style",
-  "chemical dispenser": "application",
-  "chemical product": "type of product",
-  "circuit breaker": "rated current (A), rated voltage (V), trip curve, number of poles, breaking capacity (kA)",
-  "circuit breaker accessory": "accessory type, compatible circuit breakers",
-  "communication module": "supported protocols, input voltage (V), power consumption (W), data rate (Mbps), interface type, inputs, outputs",
-  "connector": "compatible conductor cross-sectional area (mm²), connection type, number of contacts, rated current (A), rated voltage (V), contact material, termination style",
-  "contact accessory": "compatible contactors",
-  "contact block": "number of circuits, contact configuration, rated current (A)",
-  "contact relay": "coil voltage (V), contact configuration, rated current (A), rated voltage (V)",
-  "contactor": "coil voltage (V), contact configuration, rated current (A), rated voltage (V), number of poles, utilization category (e.g. AC3), mechanical life (operations), electrical life (operations), auxiliary contacts count, operating temperature range (°C)",
-  "contactor accessory": "compatible contactors, accessory type",
-  "contactor auxiliary contact": "contact configuration, rated current (A), rated voltage (V)",
-  "contactor coil": "coil voltage (V), power consumption (W)",
-  "contactors": "coil voltage (V), contact configuration, rated current (A)",
-  "controller": "type of controller",
-  "cooling oil": "viscosity (cSt), dielectric strength (kV), flash point (°C), pour point (°C), density (kg/m³), viscosity index (VI), total acid number (TAN), oxidation stability (hours)",
-  "disconnector": "rated voltage (V), rated current (A), number of poles",
-  "display": "screen size (inches), resolution, display type, interface",
-  "drive": "rated power (kW), supply voltage (V), control type, efficiency (%), current rating (A), frequency range (Hz), overload capacity (e.g. % for x s), cooling method, communication interface",
-  "enclosure": "enclousure application",
-  "fan": "power consumption (W), voltage (V), type of fan",
-  "fan accessory": "accessory type, compatible fan models",
-  "fastener": "type of fastener",
-  "filter": "type of filter",
-  "fuse": "rated current (A), rated voltage (V), fuse type, breaking capacity (kA), time characteristic, I²t (A²s), voltage drop (V), ambient temperature rating (°C), dimensions (mm), material",
-  "fuse base": "supported fuse type, mounting style",
-  "fuse holder": "supported fuse size, rated current (A), rated voltage (V), number of poles",
-  "heater":"heating power (W), supply voltage (V), element type, enclosure rating, temperature range (°C), control type (e.g. thermostat, PID), heating element material, mounting style",
-  "indicator light": "voltage (V), application",
-  "inductor": "inductance (µH), rated current (A), rated voltage (V), DC resistance (Ω), self-resonant frequency (MHz)",
-  "insulating oil": "viscosity (cSt), dielectric strength (kV), flash point (°C), pour point (°C), total acid number (TAN), density (kg/m³)",
-  "insulation": "insulation material, thickness (mm), dielectric strength (kV/mm)",
-  "insulator": "material, rated voltage (kV), mechanical load (kN)",
-  "insulator chain": "link material, link strength (kN), link length (mm)",
-  "inverter": "rated power (kW), input voltage (V), output voltage (V), efficiency (%), switching frequency (kHz), total harmonic distortion (THD), protection class (IP), cooling method",
-  "inverter accessory": "type of accessory, compatible inverters",
-  "limit switch": "actuation type, rated current (A), rated voltage (V)",
-  "lock": "lock type, material, mounting style",
-  "lubricant": "viscosity (cSt), temperature range (°C), base oil type, viscosity index (VI), pour point (°C), flash point (°C), additive package, density (kg/m³)",
-  "measurement device": "measured parameter, range, accuracy, resolution",
-  "mechanical component (tracker)": "mechanical motion range (°), load capacity (kg)",
-  "module": "module type, input voltage (V), power consumption (W)",
-  "monitoring device": "application",
-  "motor": "power (kW), voltage (V), frequency (Hz), speed (rpm), number of poles, supply type (AC or DC), efficiency (%), enclosure type (IP rating)",
-  "mounting bracket": "application",
-  "mounting rail": "rail type",
-  "network converter": "number of ports, rated voltage (V)",
-  "network switch": "number of ports, supported speeds, power consumption (W), switching capacity (Gbps), port types (RJ45/SFP), PoE support, management interface, VLAN support, manageable (yes/no), supported protocols (e.g. SNMP, STP, LACP), dimensions (mm), operating temperature range (°C)",
-  "packing set": "number of items, item type",
-  "panel": "material, number of cells, finish, weight (kg)",
-  "power module": "rated power (kW), input voltage (V), output voltage (V)",
-  "power supply": "output voltage (V), output current (A), input voltage range (V)",
-  "reactor": "rated inductance (mH), rated current (A), rated voltage (V)",
-  "rectifier": "rated current (A), rated voltage (V), number of phases",
-  "regulatory relay": "function type, coil voltage (V), contact configuration",
-  "relay": "type, coil voltage (V), contact configuration, contact material, rated current (A), switching voltage (V)",
-  "relay socket": "compatible relays, mounting style",
-  "relay timer": "timing range, supply voltage (V), timing accuracy, output type",
-  "resistor": "resistance (Ω), tolerance (%), power rating (W), material",
-  "resistor card": "number of resistors, card type, mounting style",
-  "seal kit": "kit contents, material compatibility",
-  "sensor": "sensor type, measurement range, output signal, supply voltage (V)",
-  "sensor amplifier": "gain, input range, bandwidth",
-  "sensor module": "sensor type, interface, supply voltage (V)",
-  "signage": "material, type of signage",
-  "solar panel": "maximum power (Wp), voltage at max power (Vmp), current at max power (Imp), open-circuit voltage (Voc), short-circuit current (Isc), efficiency (%), temperature coefficient (%/°C), dimensions (mm), weight (kg), frame material",
-  "surge arrester": "nominal discharge current (kA), maximum continuous operating voltage (V), number of poles, material",
-  "surge protector": "nominal discharge current (kA), maximum continuous operating voltage (V)",
-  "switch": "switch type, rated current (A), rated voltage (V), actuator type",
-  "test block": "type, number of circuits, material, insulation rating",
-  "timer": "timing range, supply voltage (V), timing accuracy",
-  "timer switch": "actuation type, timing range, rated voltage (V)",
-  "tool set": "number of tools, tool types",
-  "tracker": "tracking type, input voltage (V), input current (A), power consumption (W), mechanical motion range (°)",
-  "transformer": "rated power (kVA), primary voltage (V), secondary voltage (V), frequency (Hz)",
-  "transformer accessory": "compatible transformers, accessory type",
-  "transformer monitor": "monitored parameters, interface, supply voltage (V)",
-  "unknown item": "application",
-  "valve": "valve type, material, pressure rating (bar)",
-  "washer": "washer type, material, dimensions (mm)"
-    }
+  {
+  "Keyboard": "key type (mechanical/membrane), layout (e.g. ANSI/ISO), connectivity (wired/wireless)",
+  "Conference System": "microphone channels, speaker output power (W), frequency response (Hz), noise cancellation, connectivity (Ethernet/Wi-Fi/Bluetooth), control interface, power supply (PoE/adapter), dimensions (mm), mounting options",
+  "Notebook": "processor model, RAM size (GB), storage type and capacity (GB), display size (inches) and resolution, battery capacity (Wh), graphics (GPU), weight (kg), port selection (USB/HDMI/etc.), operating system",
+  "Monitor": "screen size (inches), resolution, panel type (IPS/VA/TN), refresh rate (Hz), brightness (cd/m²), contrast ratio, response time (ms), connectivity (HDMI/DP/VGA), aspect ratio",
+  "Smartphone": "display size (inches) and resolution, processor chipset, RAM (GB), storage (GB), battery capacity (mAh), rear/front camera (MP), operating system, connectivity (5G/Wi-Fi/Bluetooth), dimensions (mm), weight (g)",
+  "Speaker": "power output (W RMS), frequency response (Hz), impedance (Ω), sensitivity (dB), driver size (inches), connectivity (wired/Bluetooth/Wi-Fi), enclosure type, dimensions (mm), weight (kg)",
+  "Videobar all-in-one": "video resolution (e.g. 4K), field of view (°), microphone array (count), speaker output (W), beamforming technology, connectivity (USB/PoE), built-in DSP features, mounting options, dimensions (mm)",
+  "Unknown item": application
+   }
 
     ### Output Examples
 
     **Example 1: All properties found**  
-    The PDF provided every UPS specification:
+    The PDF provided every Monitor specification:
 
     ```json
         {
-        "part number": "UPS-5000X",
-        "manufacturer": "PowerTech",
+        "part number": "P2422H",
+        "product": Dell 24 Monitor P2422H"
+        "manufacturer": "Dell",
+        "NCM": "8528.52.00",
+        "datasheet": https://www.delltechnologies.com/asset/en-us/products/electronics-and-accessories/technical-support/dell-24-monitor-p2422h-datasheet.pdf
         "type": {
-            "name": "UPS",
-            "input voltage (V)": "230 V",
-            "output voltage (V)": "230 V",
-            "battery type": "Lead-acid",
-            "backup time (min)": "15",
-            "supply type (AC or DC)": "AC",
-            "rated capacity (kVA)": "5",
-            "efficiency (%)": "95%",
-            "topology (online/offline)": "online",
-            "transfer time (ms)": "0",
-            "weight (kg)": "25"
+            "name": "Monitor",
+            "screen size (inches)": "23.8",
+            "resolution": "1920x1080",
+            "panel type": "IPS",
+            "refresh rate (Hz)": "60",
+            "brightness (cd/m²)": "250",
+            "contrast ratio": "1000:1",
+            "response time (ms)": "5",
+            "connectivity": "HDMI, DisplayPort, VGA",
+            "aspect ratio": "16:9"
             }
         }
 
     **Example 2: Some properties missing**
     The datasheet did not mention “battery type” or “transfer time”; those fields are set to "Not found":
 
-    {
-    "part number": "UPS-3000Z",
-    "manufacturer": "SecurePower",
-    "type": {
-        "name": "UPS",
-        "input voltage (V)": "120 V",
-        "output voltage (V)": "120 V",
-        "battery type": "Not found",
-        "backup time (min)": "10",
-        "supply type (AC or DC)": "AC",
-        "rated capacity (kVA)": "3",
-        "efficiency (%)": "92%",
-        "topology (online/offline)": "offline",
-        "transfer time (ms)": "Not found",
-        "weight (kg)": "18"
-    }
-    }
+       {
+        "part number": "P2422H",
+        "product": Dell 24 Monitor P2422H"
+        "manufacturer": "Dell",
+        "NCM": "8528.52.00",
+        "datasheet": Not found,
+        "type": {
+            "name": "Monitor",
+            "screen size (inches)": "23.8",
+            "resolution": "Not found",
+            "panel type": "IPS",
+            "refresh rate (Hz)": "60",
+            "brightness (cd/m²)": "Not found",
+            "contrast ratio": "1000:1",
+            "response time (ms)": "Not found",
+            "connectivity": "HDMI, DisplayPort, VGA",
+            "aspect ratio": "16:9"
+            }
+        }
 
 
     """,
@@ -333,18 +247,28 @@ async def submit_product(
     exists = db.query(Product).filter_by(part_number=payload.part_number).first()
     if exists:
         raise HTTPException(400, "part_number already exists")
+    
+     # 2) Garante que existe um registro em types
+    type_obj = db.query(Type).filter_by(type=payload.product_type).first()
+    if not type_obj:
+        raise HTTPException(400, f"Type '{payload.product_type}' não encontrado")
 
-    # 2) Cria instância do ORM
+    # 3) Garante que existe um registro em ncm
+    ncm_obj = None
+    if payload.ncm:
+        ncm_obj = db.query(NCM).filter_by(ncm=payload.ncm).first()
+        if not ncm_obj:
+            raise HTTPException(400, f"NCM '{payload.ncm}' não encontrado")
+
     new = Product(
         product      = payload.product,
         manufacturer = payload.manufacturer,
         part_number  = payload.part_number,
         description  = payload.description,    # aqui vai a string concatenada
-        ncm          = payload.ncm,   # ou payload.NCM, conforme seu modelo
         datasheet    = payload.datasheetURL,
-        qtde         = 0,
-        type         = payload.product_type,
-        price        = payload.price
+        price        = payload.price,
+        type_id      = type_obj.type_id,
+        ncm_id       = ncm_obj.ncm_id
     )
 
     # 3) Persiste no banco

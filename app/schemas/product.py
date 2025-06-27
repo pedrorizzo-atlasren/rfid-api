@@ -11,4 +11,4 @@ class RegisterProduct(BaseModel):
     price: Optional[float] = None
     datasheetURL: Optional[str] = None
     description: Optional[str] = None
-    ncm: Optional[str] = None
+    ncm: str

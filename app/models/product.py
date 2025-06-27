@@ -1,9 +1,8 @@
 # app/models.py
 
-from sqlalchemy import Column, Integer, Text, Numeric
+from sqlalchemy import Column, Integer, Text, Numeric, ForeignKey
 from database import Base
 from sqlalchemy.orm import relationship
-# from models.item import Item
 
 
 class Product(Base):
@@ -14,12 +13,14 @@ class Product(Base):
     manufacturer = Column(Text,   nullable=False)
     part_number  = Column(Text,   nullable=False, unique=True)
     description  = Column(Text,   nullable=True)
-    ncm          = Column(Text,   nullable=True)
     datasheet    = Column(Text,   nullable=True)   # armazena URL ou caminho
-    qtde         = Column(Integer, nullable=False, default=0)
-    type         = Column(Text,   nullable=True)
     price        = Column(Numeric(12, 2), nullable=True)
 
+    type_id = Column(Integer, ForeignKey("types.type_id", ondelete="SET NULL"))
+    ncm_id  = Column(Integer, ForeignKey("ncm.ncm_id", ondelete="SET NULL"))
+
+    type_obj = relationship("Type", back_populates="products")
+    ncm_obj  = relationship("NCM",  back_populates="products")
 
     items = relationship(
         "Item",
