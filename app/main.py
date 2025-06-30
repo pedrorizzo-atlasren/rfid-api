@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from api.routes import create_product, control_reader, logs, chat
+from api.routes import create_product, control_reader, logs, chat, get_products
 import logging
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
@@ -31,6 +31,8 @@ app.include_router(create_product.router, tags=["create_product"])
 app.include_router(control_reader.router, tags=["control_reader"])
 app.include_router(logs.router, tags=["logs"])
 app.include_router(chat.router, tags=["chat"])
+app.include_router(get_products.router, tags=["get_products"])
+
 
 
 @app.get("/")

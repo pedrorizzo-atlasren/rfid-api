@@ -12,3 +12,10 @@ class RegisterProduct(BaseModel):
     datasheetURL: Optional[str] = None
     description: Optional[str] = None
     ncm: str
+
+class ProductOut(BaseModel):
+    product_id: int
+    product: str
+
+    class Config:
+        orm_mode = True
