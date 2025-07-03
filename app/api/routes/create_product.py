@@ -8,7 +8,7 @@ from schemas.product import RegisterProduct
 from fastapi import Depends
 from sqlalchemy.orm import Session
 from models.product import Product
-from models.type import Type
+from models.types import Type
 from models.ncm import NCM
 from database import get_db
 import re

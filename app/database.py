@@ -30,7 +30,7 @@ SessionLocal = sessionmaker(
 # Classe base para todos os models
 Base = declarative_base()
 
-from models import product, item, logs
+from models import product, item, logs, ncm, types
 
 
 # Dependência para obter uma sessão e fechá-la ao final da requisição
