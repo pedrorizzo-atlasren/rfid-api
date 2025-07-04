@@ -12,7 +12,10 @@ from models.types import Type
 from models.ncm import NCM
 from database import get_db
 import re
-
+from sqlalchemy import select, func
+from langchain_postgres.vectorstores import PGVector
+from langchain_community.embeddings import OpenAIEmbeddings
+import psycopg2
 
 router = APIRouter()
 load_dotenv()
@@ -21,6 +24,11 @@ load_dotenv()
 
 # Inicializa o cliente OpenAI
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+DATABASE_URL = os.getenv("POSTGRES_URL")
+DB_NAME = os.getenv("DB_NAME")
+DB_USER = os.getenv("DB_USER")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
+
 
 # Cria um Assistente com busca em arquivos ativada
 assistant = client.beta.assistants.create(
@@ -183,72 +191,28 @@ async def extract_description(file: UploadFile = File(...)):
         if os.path.exists(temp_path):
             os.remove(temp_path)
 
-# from fastapi import APIRouter, UploadFile, File, HTTPException
-# from fastapi.responses import JSONResponse
-# from openai import OpenAI
-# from dotenv import load_dotenv
-# import os
-# import tempfile
 
-# router = APIRouter()
-# load_dotenv()
+# distância máxima de cosine para considerar “muito parecido”
+SIMILARITY_THRESHOLD = 0.8
+# quantos candidatos queremos de volta
+TOP_K = 5
 
-# client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 
-# @router.post("/extract-description")
-# async def extract_description(file: UploadFile = File(...)):
-#     if not file.filename.endswith(".pdf"):
-#         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
-
-#     try:
-#         # Salva temporariamente
-#         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-#             temp_path = tmp.name
-#             tmp.write(await file.read())
-
-#         # Faz upload (com handle aberto e fechado corretamente)
-#         with open(temp_path, "rb") as f:
-#             uploaded_file = client.files.create(file=f, purpose="user_data")
-
-#         # Usa o modelo que suporta PDF como input
-#         response = client.chat.completions.create(
-#             model="gpt-4.1",  # ✅ Necessário para suportar PDF com input_file
-#             messages=[
-#                 {
-#                     "role": "user",
-#                     "content": [
-#                         {"type": "input_file", "file_id": uploaded_file.id},
-#                         {"type": "text", "text": "Give a one-line summary of the main technical characteristics of this product datasheet. Format: '24V, 5A, IP67'. If not found, say 'Not found'."}
-#                     ]
-#                 }
-#             ],
-#             temperature=0
-#         )
-
-#         result = response.choices[0].message.content.strip()
-#         return JSONResponse(content={"response": result}, status_code=200)
-
-#     except Exception as e:
-#         return JSONResponse(content={"error": str(e)}, status_code=500)
-
-#     finally:
-#         # Agora o arquivo já foi fechado corretamente e pode ser removido
-#         if os.path.exists(temp_path):
-#             os.remove(temp_path)
 
 @router.post("/submit-product", response_model=RegisterProduct)
 async def submit_product(
     request: Request,
     payload: RegisterProduct,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
 
-    # 1) Verifica unicidade de part_number (opcional)
-    exists = db.query(Product).filter_by(part_number=payload.part_number).first()
-    if exists:
-        raise HTTPException(400, "part_number already exists")
+    # # 1) Verifica unicidade de part_number (opcional)
+    # exists = db.query(Product).filter_by(part_number=payload.part_number).first()
+    # if exists:
+    #     raise HTTPException(400, "part_number already exists")
     
-     # 2) Garante que existe um registro em types
+    #  2) Garante que existe um registro em types
     type_obj = db.query(Type).filter_by(type=payload.product_type).first()
     if not type_obj:
         raise HTTPException(400, f"Type '{payload.product_type}' não encontrado")
@@ -259,6 +223,64 @@ async def submit_product(
         ncm_obj = db.query(NCM).filter_by(ncm=payload.ncm).first()
         if not ncm_obj:
             raise HTTPException(400, f"NCM '{payload.ncm}' não encontrado")
+        
+    similar  = []
+        
+    if not payload.confirm:
+        product_text = (
+        f"Product: {payload.product}; "
+        f"Part Number: {payload.part_number}; "
+        f"Manufacturer: {payload.manufacturer}; "
+        f"Description: {payload.description or ''}"
+        ) 
+
+        conn = psycopg2.connect(f"dbname={DB_NAME} user={DB_USER} password={DB_PASSWORD}")
+        cur = conn.cursor()
+
+        new_embedding = embeddings.embed_query(product_text)
+
+        cur.execute("""
+                    SELECT
+                        product_id,
+                        product,
+                        part_number,
+                        manufacturer,
+                        description,
+                        embedding <-> %s::vector AS distance
+                        FROM products
+                        WHERE embedding <-> %s::vector < %s
+                        ORDER BY distance
+                        LIMIT %s
+                    """, (new_embedding, new_embedding, SIMILARITY_THRESHOLD, TOP_K))
+        
+        rows = cur.fetchall()
+
+        print('ROWS:', rows)
+
+        similar = [
+            {
+            "product_id": pid,
+            "product":     name,
+            "part_number": pn,
+            "manufacturer": manu,
+            "description":  desc,
+            "distance":     dist
+            }
+            for pid, name, pn, manu, desc, dist in rows
+        ]
+
+        print('SIMILAR:', similar)
+
+    # se houver similares e não veio confirm=True, devolve a lista pra front
+    if len(similar) > 0:
+        return JSONResponse(
+            status_code=200,
+            content={
+                "action": "check_similarity",
+                "candidates": similar
+            }
+        )
+    
 
     new = Product(
         product      = payload.product,
@@ -277,4 +299,10 @@ async def submit_product(
     db.refresh(new)
 
     # 4) Retorna de volta o objeto salvo (ou apenas um OK)
-    return payload
+    return JSONResponse(
+        status_code=200,
+        content={
+            "action": "product_uploaded",
+            "content": payload
+        }
+    )

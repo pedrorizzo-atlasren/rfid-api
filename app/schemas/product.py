@@ -12,6 +12,7 @@ class RegisterProduct(BaseModel):
     datasheetURL: Optional[str] = None
     description: Optional[str] = None
     ncm: str
+    confirm: bool
 
 class ProductOut(BaseModel):
     product_id: int
