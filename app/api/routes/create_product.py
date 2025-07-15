@@ -16,6 +16,9 @@ from sqlalchemy import select, func
 from langchain_postgres.vectorstores import PGVector
 from langchain_community.embeddings import OpenAIEmbeddings
 import psycopg2
+import requests
+import json
+from services.agent_description import run_agent_ncm, run_agent_datasheet
 
 router = APIRouter()
 load_dotenv()
@@ -132,6 +135,85 @@ Types and their required properties:
     tools=[{"type": "file_search"}]
 )
 
+question_mapping = {
+    "product": "what is the name of the product?",
+    "part_number": "what is the part number of the product?",
+    "manufacturer": "who is the manufacturer of the product?",
+    "NCM": "what is the Nomenclatura Comum do Mercosul (NCM) of the product? You can answer this even if this information isn't provided in the document. If that's the case, answer it based on your knowledge.  When extracting or generating an NCM code, format it as 1234.56.78 (four digits, a dot, two digits, a dot, two digits).",
+    "datasheet": "what is the URL of the product's datasheet? You can answer this even if this information isn't provided in the document. If that's the case, answer it based on your knowledge",
+    "type": "what is the type of the product? It can be Keyboard, Conference System, Notebook, Monitor, Smartphone, Speaker, Videobar all-in-one or Unknown item.",
+    "if this document is related to a Conference System, return": '''{
+      "microphone channels": "value",
+      "speaker output power (W)": "value",
+      "frequency response (Hz)": "value",
+      "noise cancellation": "value",
+      "connectivity (Ethernet/Wi-Fi/Bluetooth)": "value",
+      "control interface": "value",
+      "power supply (PoE/adapter)": "value",
+      "dimensions (mm)": "value",
+      "mounting options": "value"
+    }'''.strip(),
+    "if this document is related to a Notebook, return": '''{
+      "processor model": "value",
+      "RAM size (GB)": "value",
+      "storage type and capacity (GB)": "value",
+      "display size (inches) and resolution": "value",
+      "battery capacity (Wh)": "value",
+      "graphics (GPU)": "value",
+      "weight (kg)": "value",
+      "port selection (USB/HDMI/etc.)": "value",
+      "operating system": "value"
+    }'''.strip(),
+    "if this document is related to a Monitor, return": '''{
+      "screen size (inches)": "value",
+      "resolution": "value",
+      "panel type (IPS/VA/TN)": "value",
+      "refresh rate (Hz)": "value",
+      "brightness (cd/m²)": "value",
+      "contrast ratio": "value",
+      "response time (ms)": "value",
+      "connectivity (HDMI/DP/VGA)": "value",
+      "aspect ratio": "value"
+    }'''.strip(),
+    "if this document is related to a Smartphone, return": '''{
+      "display size (inches) and resolution": "value",
+      "processor chipset": "value",
+      "RAM (GB)": "value",
+      "storage (GB)": "value",
+      "battery capacity (mAh)": "value",
+      "rear/front camera (MP)": "value",
+      "operating system": "value",
+      "connectivity (5G/Wi-Fi/Bluetooth)": "value",
+      "dimensions (mm)": "value",
+      "weight (g)": "value"
+    }'''.strip(),
+    "if this document is related to a Speaker, return": '''{
+      "power output (W RMS)": "value",
+      "frequency response (Hz)": "value",
+      "impedance (Ω)": "value",
+      "sensitivity (dB)": "value",
+      "driver size (inches)": "value",
+      "connectivity (wired/Bluetooth/Wi-Fi)": "value",
+      "enclosure type": "value",
+      "dimensions (mm)": "value",
+      "weight (kg)": "value"
+    }'''.strip(),
+    "if this document is related to a Videobar all-in-one, return": '''{
+      "video resolution (e.g. 4K)": "value",
+      "field of view (°)": "value",
+      "microphone array (count)": "value",
+      "speaker output (W)": "value",
+      "beamforming technology": "value",
+      "connectivity (USB/PoE)": "value",
+      "built-in DSP features": "value",
+      "mounting options": "value",
+      "dimensions (mm)": "value"
+    }'''.strip(),
+    "if this document is related to an Unknown item, return": '''{
+      "application": "value"
+    }'''.strip()
+  }
+
 @router.post("/extract-description")
 async def extract_description(file: UploadFile = File(...)):
     if not file.filename.endswith(".pdf"):
@@ -140,56 +222,95 @@ async def extract_description(file: UploadFile = File(...)):
     try:
         # Salva o arquivo temporariamente
         suffix = os.path.splitext(file.filename)[-1]
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            temp_path = tmp.name
-            contents = await file.read()
-            tmp.write(contents)
+        # with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        #     temp_path = tmp.name
+        #     contents = await file.read()
+        #     tmp.write(contents)
 
-        # Faz upload do arquivo para OpenAI
-        with open(temp_path, "rb") as f:
-            uploaded_file = client.files.create(file=f, purpose="assistants")
 
-        # Cria o thread com o arquivo como anexo
-        thread = client.beta.threads.create(
-            messages=[
-                {
-                    "role": "user",
-                    "content": "Extract the main technical characteristics of this product datasheet.",
-                    "attachments": [
-                        {"file_id": uploaded_file.id, "tools": [{"type": "file_search"}]}
-                    ]
-                }
-            ]
-        )
+        data = {
+            "questions_mapping": json.dumps(question_mapping)
+        }
+        # files = {
+        #     # o ‘file’ deve ter o mesmo nome de campo usado pelo serviço externo
+        #     "file": open(temp_path, "rb")
+        # }
+        files = {
+            "file": (file.filename, file.file, file.content_type or "application/pdf")
+        }
 
-        # Cria a execução do assistente
-        run = client.beta.threads.runs.create(
-            thread_id=thread.id,
-            assistant_id=assistant.id,
-        )
+        url = "https://core-staging.atlasren.com/pdf/process-invoice"
+        headers = {
+            "X-API-Key": "odoostaging_key4gg@wQqLJ8EWsuWA",
+            "Accept": "application/json",
+            # Note que não é necessário definir Content-Type:
+            # o requests faz isso automaticamente para multipart/form-data
+        }
 
-        # Aguarda a execução completar
-        import time
-        while True:
-            status = client.beta.threads.runs.retrieve(thread_id=thread.id, run_id=run.id)
-            if status.status == "completed":
-                break
-            elif status.status in ["failed", "cancelled"]:
-                raise Exception("Run failed or was cancelled.")
-            time.sleep(1)
+        
+        # Abrimos o arquivo DENTRO do with para garantir que será fechado logo após o POST
+        # with open(temp_path, "rb") as f:
+        #     files = {"file": f}
+        #     resp = requests.post(url, headers=headers, data=data, files=files)
+        #     resp.raise_for_status()
+        #     return JSONResponse(status_code=resp.status_code, content=resp.json())
 
-        # Recupera a resposta
-        messages = client.beta.threads.messages.list(thread_id=thread.id)
-        response_text = messages.data[0].content[0].text.value
+        resp = requests.post(url, headers=headers, data=data, files=files)
 
-        return JSONResponse(content={"response": response_text}, status_code=200)
+        if resp.status_code >= 400:
+            print('esta em >= 400')
+            # tenta parsear como JSON; se falhar, usa texto puro
+            try:
+                error_content = resp.json()
+                print('error_content:', error_content)
+            except ValueError:
+                print('ValueError')
+                error_content = resp.text
+
+            # opcional: você pode logar também no servidor:
+            # print(f"Erro na API externa ({resp.status_code}): {error_content}")
+
+            # retorna o status e corpo de erro
+            return JSONResponse(status_code=resp.status_code, content={
+                "external_api_error": error_content
+            })
+        
+        print('antes de resp wo')
+        resp_withou_ncm_and_datasheet = resp.json()
+        print('RESP_WO_NCM_DATASHEET', resp_withou_ncm_and_datasheet)
+
+        data = resp_withou_ncm_and_datasheet["results"]
+
+        # question_ncm =  [{"role": "user", "content": f"I will describe you a product and I want you to return me the NCM (Nomenclatura Comum do Mercosul) of this product. Name of the product: {data["product"]}; Part Number: {data["part_number"]}; Manufacturer: {data["manufacturer"]}"}]
+        # question_datasheet =  [{"role": "user", "content": f"I will describe you a product and I want you to return me the URL of the PDF datasheet of this product. Name of the product: {data["product"]}; Part Number: {data["part_number"]}; Manufacturer: {data["manufacturer"]}"}]
+
+
+        # ncm = None
+        # datasheet_url = None
+        # try:
+        #     ncm = run_agent_ncm(question_ncm)
+        #     datasheet_url = run_agent_datasheet(question_datasheet)
+        # except Exception as e:
+        #     print('Erro detectado:', e)        
+
+        # print('NCM:' , ncm)
+        # print('datasheer URL:',datasheet_url)
+
+
+        # resp.raise_for_status()
+
+        return JSONResponse(status_code=resp.status_code, content=resp.json())
+
+
+        
+
 
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
-    finally:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
+    # finally:
+    #     if os.path.exists(temp_path):
+    #         os.remove(temp_path)
 
 
 # distância máxima de cosine para considerar “muito parecido”
