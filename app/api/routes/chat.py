@@ -33,7 +33,6 @@ Database schema:
     • p.datasheet         (URL)
     • p.price
     • p.type_id → types t (t.type_id, t.type, t.description)
-    • p.ncm_id  → ncm  n (n.ncm_id, n.code, n.description)
 - types t
     • t.type_id
     • t.type
@@ -82,6 +81,7 @@ async def chat_sql(
     db: Session = Depends(get_db),
     x_session_id: str | None = Header(None),
 ):
+    new_user_prompt = True
     print("→ INCOMING X_SESSION_ID:", x_session_id)
     # 0) (re)cria sessão
     if not x_session_id or x_session_id not in chat_sessions:
@@ -93,12 +93,15 @@ async def chat_sql(
     while True:
         print('INÍCIO DO LOOP')
         history = chat_sessions[session_id]
+        print('HISTORY:', history)
+
         print(len(history))
 
-        if len(history) == 1:
+        if new_user_prompt:
             history.append(
                 {"role": "user", "content": req.prompt}
             )
+            new_user_prompt = False
 
 
        
