@@ -9,8 +9,8 @@ class NCM(Base):
     ncm        = Column(Text, nullable=False, unique=True)
     description = Column(Text)
 
-    products = relationship(
-        "Product",
-        back_populates="ncm_obj",
-        passive_deletes=True,
-    )
+    # products = relationship(
+    #     "Product",
+    #     back_populates="ncm_obj",
+    #     passive_deletes=True,
+    # )

@@ -7,7 +7,7 @@ class Log(Base):
     __tablename__ = "logs"
 
     log_id     = Column(Integer, primary_key=True, index=True)
-    item_id    = Column(Integer, ForeignKey("items.item_id", ondelete="CASCADE"), nullable=False)
+    item_id    = Column(Text, ForeignKey("items.item_id", ondelete="CASCADE"), nullable=False)
     status     = Column(Text, nullable=False)
     timestamp  = Column(TIMESTAMP(timezone=True), nullable=False)
     registered = Column(Boolean, default=False, nullable=False)

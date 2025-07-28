@@ -20,8 +20,8 @@ from sqlalchemy import func
 
 router = APIRouter()
 
-@router.get('/products')
-def get_products(db: Session = Depends(get_db), response_model=List[ProductOut]):
+@router.get('/products', response_model=List[ProductOut])
+def get_products(db: Session = Depends(get_db)):
     produtos = db.query(Product).order_by(Product.product_id).all()
     if produtos is None:
         raise HTTPException(404, "Nenhum produto encontrado")

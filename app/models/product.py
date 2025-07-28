@@ -19,10 +19,10 @@ class Product(Base):
     embedding    = Column(Vector(1536), nullable=True)
 
     type_id = Column(Integer, ForeignKey("types.type_id", ondelete="SET NULL"))
-    ncm_id  = Column(Integer, ForeignKey("ncm.ncm_id", ondelete="SET NULL"))
+    # ncm_id  = Column(Integer, ForeignKey("ncm.ncm_id", ondelete="SET NULL"))
 
     type_obj = relationship("Type", back_populates="products")
-    ncm_obj  = relationship("NCM",  back_populates="products")
+    # ncm_obj  = relationship("NCM",  back_populates="products")
 
     items = relationship(
         "Item",

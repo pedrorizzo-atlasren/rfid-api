@@ -10,13 +10,13 @@ from database import Base
 class Item(Base):
     __tablename__ = "items"
 
-    item_id     = Column(Integer, primary_key=True, index=True)
+    item_id     = Column(Text, primary_key=True, index=True)
     product_id  = Column(
         Integer,
         ForeignKey("products.product_id", ondelete="RESTRICT"),
-        nullable=False,
+        nullable=True,
     )
-    location    = Column(Text)
+    location    = Column(Text, nullable=True)
     status      = Column(Text)    # ex.: 'baixa', 'saida', etc.
     status_desc = Column(Text)
     ts          = Column(

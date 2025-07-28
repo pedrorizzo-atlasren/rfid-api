@@ -21,7 +21,8 @@ from models.logs import Log
 from models.item import Item
 from database import SessionLocal
 from sqlalchemy.dialects.postgresql import insert
-from datetime import datetime
+from datetime import datetime, timezone
+
 
 
 
@@ -39,6 +40,9 @@ LOGS = {}       # eventos de entrada/saída
 READER_IP = "10.50.0.18"
 PORT = LLRP_DEFAULT_PORT
 READER = None
+
+ENTRY_ANTENNA_ID = 1
+EXIT_ANTENNA_ID = 2
 
 
 def get_reader():
@@ -95,82 +99,21 @@ def stop_reading():
 def get_status():
     return {"status": READER.is_alive()}
 
-
-# def tag_report_cb(_reader, tag_reports):
-    # global TAG_DATA, TAG_STATE, LOGS
-#     now = int(time.time())
-#     TAG_DATA = []
-
-#     for tag in tag_reports:
-#         epc = tag["EPC"].decode("ascii")
-#         antenna = tag.get("AntennaID")
-#         channel = tag["ChannelIndex"]
-#         last_seen = tag["LastSeenTimestampUTC"]
-#         seen_count = tag["TagSeenCount"]
-
-#         TAG_DATA.append(RFIDTag(
-#             epc=epc,
-#             channel=channel,
-#             last_seen=last_seen,
-#             seen_count=seen_count,
-#             antenna=antenna,
-#         ))
-
-#         previous = TAG_STATE.get(epc)
-
-#         if epc not in LOGS:
-#             LOGS[epc] = []
+TAG_LAST_ANTENNA = {}
+TAG_LAST_SEEN = {}
+EVENT_TIME_WINDOW = 2  # seconds
+TAG_MOVEMENT_STATE = {}
+TAG_LAST_SEEN_EXIT = {}
+TAG_LAST_SEEN_ENTRY = {}
 
 
-#         # PRIMERIA VEZ QUE A TAG APARECE -> BAIXA NO ESTOQUES
-#         if previous is None and antenna == 1:
-#             # Primeira vez que a tag aparece — baixa no estoque
-#             TAG_STATE[epc] = {
-#                 "last_antenna": antenna,
-#                 "status": "in",
-#                 "last_seen": now,
-#             }
-#             LOGS[epc].append({"timestamp": now, "status": "baixa", "registered": True})
-
-#         else:
-#             last_ant = previous["last_antenna"]
-#             status = previous["status"]
-
-#             if antenna == 2 and last_ant == 1:
-#                 # Saída
-#                 TAG_STATE[epc] = {
-#                     "last_antenna": antenna,
-#                     "status": "out",
-#                     "last_seen": now,
-#                 }
-#                 LOGS[epc].append({"timestamp": now, "status": "saida", "registered": False})
-
-#             #Se a antena atual que lê o objeto é a 1 e a última antena que o leu foi a 2,
-#             #registra uma re-entrada
-#             elif antenna == 1  and last_ant == 2:
-#                 # Reentrada
-#                 TAG_STATE[epc] = {
-#                     "last_antenna": antenna,
-#                     "status": "in",
-#                     "last_seen": now,
-#                 }
-#                 LOGS[epc].append({"timestamp": now, "status": "reentrada", "registered": False})
-
-#             else:
-#                 # Atualiza apenas tempo e antena
-#                 TAG_STATE[epc]["last_antenna"] = antenna
-#                 TAG_STATE[epc]["last_seen"] = now
-
-
-    # serializable = [tag.model_dump() for tag in TAG_DATA]
-    # TAG_QUEUE.put(serializable)
 
 def tag_report_cb(_reader, tag_reports):
     now = int(time.time())
     db = SessionLocal()
-    global TAG_DATA, TAG_STATE, LOGS
+    global TAG_DATA, TAG_STATE, LOGS, TAG_LAST_ANTENNA, TAG_LAST_SEEN
 
-
+    TAG_STATE = {}
     try:
         for tag in tag_reports:
 
@@ -180,6 +123,18 @@ def tag_report_cb(_reader, tag_reports):
             last_seen = tag["LastSeenTimestampUTC"]
             seen_count = tag["TagSeenCount"]
 
+            if TAG_LAST_ANTENNA.get(epc) is not None:
+                prev_antenna = TAG_LAST_ANTENNA[epc]
+      
+            if TAG_LAST_SEEN.get(epc) is not None:
+                prev_seen = TAG_LAST_SEEN[epc]
+
+            TAG_LAST_ANTENNA[epc] = antenna
+            TAG_LAST_SEEN[epc] = last_seen
+
+
+
+
             TAG_DATA.append(RFIDTag(
                 epc=epc,
                 channel=channel,
@@ -188,44 +143,108 @@ def tag_report_cb(_reader, tag_reports):
                 antenna=antenna,
             ))
 
-            serializable = [tag.model_dump() for tag in TAG_DATA]
-            TAG_QUEUE.put(serializable)
+            TAG_STATE[epc] = RFIDTag(
+                epc=epc,
+                channel=channel,
+                last_seen=last_seen,
+                seen_count=seen_count,
+                antenna=antenna,
+            )
+
+            if not epc.startswith('e2801191'):
+                continue
+
+            item = db.query(Item).filter(Item.item_id == epc).first()
+
+            if antenna == ENTRY_ANTENNA_ID:
+                dt = datetime.fromtimestamp(last_seen/1000000, tz=timezone.utc)
+                TAG_LAST_SEEN_ENTRY[epc] = dt
+                dt = datetime.fromtimestamp(last_seen/1000000, tz=timezone.utc)
+                if item is None:
+                    item = Item(item_id=epc, status="entrance", status_desc="first entrance", ts=dt)
+                    db.add(item)
+                    db.commit()
+                    db.refresh(item)
+                    db.add(Log(item_id=item.item_id, status="entrance", timestamp=dt, registered=True, description="first entrance"))
+                    db.commit()
+                    TAG_MOVEMENT_STATE[epc] = "entrance"
+                else:
+                    
+                    # if TAG_LAST_SEEN_EXIT.get(epc) is not None:
+                    #     prev_exit_antenna = TAG_LAST_SEEN_EXIT[epc]
+
+                    if prev_antenna == EXIT_ANTENNA_ID and item.status == 'exit' and ((last_seen-prev_seen)/1e6) > EVENT_TIME_WINDOW:
+                        item.status = 're-entrance'
+                        item.status_desc = ''
+                        db.add(Log(item_id=item.item_id, status='re-entrance', timestamp=dt, registered=False, description=''))
+                        db.commit()
+                        TAG_MOVEMENT_STATE[epc] = "re-entrance"
+                        continue
+
+                    elif TAG_LAST_SEEN_EXIT.get(epc) is not None:
+                        prev_exit: datetime = TAG_LAST_SEEN_EXIT[epc]
+                        if prev_antenna == ENTRY_ANTENNA_ID and item.status == 'exit' and (dt - prev_exit) > EVENT_TIME_WINDOW:
+                            item.status = 're-entrance'
+                            item.status_desc = ''
+                            db.add(Log(item_id=item.item_id, status='re-entrance', timestamp=dt, registered=False, description=''))
+                            db.commit()
+                            TAG_MOVEMENT_STATE[epc] = "re-entrance"
+                            continue
+                 
 
 
-            # recupera estado anterior diretamente do banco
-            prev_item = db.query(Item).filter_by(item_id=epc).first()
-            prev_status = prev_item.status if prev_item else None
 
-            # decide novo status
-            if prev_item is None and antenna == 1:
-                new_status, new_desc = "entrance", "entrance"
-            elif (prev_status == "entrance" or prev_status == "re-entrance") and antenna == 2:
-                new_status, new_desc = "out", ""
-            elif prev_status == "out" and antenna == 1:
-                new_status, new_desc = "re-entrance", ""
-            else:
-                # nenhum evento significativo, só atualiza timestamp
-                new_status, new_desc = prev_status, prev_item.status_desc if prev_item else ""
+            elif antenna == EXIT_ANTENNA_ID:
+                if item is None:
+                    continue
+                dt = datetime.fromtimestamp(last_seen/1000000, tz=timezone.utc)
+                TAG_LAST_SEEN_EXIT[epc] = dt
 
-            
-            if new_status and new_status != prev_status:
-                # 3) grava no histórico de logs
-                log = Log(
-                    item_id    = epc,
-                    status     = new_status,
-                    timestamp  = datetime.now(),  # sem UTC
-                    registered = False
-                )
-                db.add(log)
+                # delta = now - prev
+                # diff_seconds = delta.total_seconds()
+                # diff_minutes = diff_seconds / 60
 
-                # 4) atualiza somente agora o item
-                prev_item.status      = new_status
-                prev_item.status_desc = ""           # ou algo genérico
-                prev_item.ts          = datetime.now()
-                db.add(prev_item)
+                if prev_antenna == ENTRY_ANTENNA_ID and (item.status == 'entrance' or item.status =='re-entrance' ) and ((last_seen - prev_seen)/1000000) > EVENT_TIME_WINDOW:
+                    print('prev_antenna')
+                    item.status = 'exit'
+                    item.status_desc = ''
+                    db.add(Log(item_id=item.item_id, status="exit", timestamp=dt, registered=False, description=''))
+                    db.commit()
+                    TAG_MOVEMENT_STATE[epc] = "exit"
+                    continue
 
-                db.commit()
-            
+                if TAG_LAST_SEEN_ENTRY.get(epc) is not None:
+                    prev_entry: datetime = TAG_LAST_SEEN_ENTRY[epc]
+                    print('tag_last_seen_entry')
+                    print('status:', item.status)
+                    print('diff:', (dt - prev_entry).total_seconds())
+                    print(prev_antenna)
+                    if prev_antenna == EXIT_ANTENNA_ID and (item.status == 'entrance' or item.status == 're-entrance') and ((dt-prev_entry).total_seconds()) > EVENT_TIME_WINDOW:
+                        print('prev_antenna')
+                        item.status = 'exit'
+                        item.status_desc = ''
+                        db.add(Log(item_id=item.item_id, status="exit", timestamp=dt, registered=False, description=''))
+                        db.commit()
+                        TAG_MOVEMENT_STATE[epc] = "exit"
+                        continue
+
+
+
+
+                else:
+                    continue
+
+
+
+
+
+        # serializable = [tag.model_dump() for tag in TAG_STATE.values() if tag.startswith('e2801191')]
+        serializable = [
+            tag.model_dump()
+            for tag in TAG_STATE.values()
+            if tag.epc.startswith('e2801191')
+        ]
+        TAG_QUEUE.put(serializable)
 
     except:
         db.rollback()
@@ -303,6 +322,3 @@ async def websocket_endpoint(websocket: WebSocket):
         logging.error(f"WebSocket error: {e}")
         if websocket in ACTIVE_CONNECTIONS:
             ACTIVE_CONNECTIONS.remove(websocket)
-
-
-
